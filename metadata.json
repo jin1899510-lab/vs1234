@@ -1,0 +1,7 @@
+{
+  "name": "실험 11",
+  "description": "평범한 사진을 최첨단 AI를 사용하여 전문가급 스튜디오 품질의 걸작으로 변환합니다. 음식 사진, 인테리어, 커머셜 에스테틱에 특화되어 있습니다.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
