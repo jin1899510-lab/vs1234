@@ -26,13 +26,21 @@ export class StudioVisionService {
   async transformImage(base64Image: string, prompt: string): Promise<string> {
     try {
       const savedKey = localStorage.getItem('_sv_api_key_');
-      const apiKey = savedKey ? atob(savedKey) : process.env.API_KEY;
+      let apiKey = process.env.API_KEY;
+      
+      if (savedKey) {
+        try {
+          apiKey = atob(savedKey);
+        } catch (e) {
+          console.error('Failed to decode saved API key');
+        }
+      }
 
-      if (!apiKey) throw new Error('API 키가 설정되지 않았습니다.');
+      if (!apiKey) throw new Error('API 키가 설정되지 않았습니다. [키 관리]에서 입력해주세요.');
 
       const ai = new GoogleGenAI({ apiKey });
       
-      // 무료 등급에서도 가장 안정적인 gemini-2.5-flash-image 사용
+      // 이미지 생성에 최적화된 gemini-2.5-flash-image 사용
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash-image',
         contents: {
@@ -44,37 +52,40 @@ export class StudioVisionService {
               },
             },
             {
-              text: `${prompt} (중요: 반드시 한 장의 이미지만 생성해줘. 원본 피사체의 특징을 유지하면서 배경과 조명을 스튜디오 퀄리티로 바꿔야 해.)`,
+              text: `${prompt} (중요: 반드시 단 한 장의 완성된 이미지만 생성해줘. 원본 피사체의 구도와 형태를 기반으로, 조명과 소품을 스튜디오급으로 완벽하게 연출해야 해.)`,
             },
           ],
         },
+        config: {
+          imageConfig: {
+            aspectRatio: "1:1"
+          }
+        }
       });
 
-      let resultImageUrl = '';
-      
-      // 응답 후보군 확인
-      if (response.candidates && response.candidates[0]?.content?.parts) {
-        for (const part of response.candidates[0].content.parts) {
-          // 인라인 이미지 데이터가 있는지 확인
-          if (part.inlineData) {
-            const mimeType = part.inlineData.mimeType || 'image/png';
-            resultImageUrl = `data:${mimeType};base64,${part.inlineData.data}`;
-            break;
+      // 응답 데이터에서 이미지 파트 찾기 (더 공격적인 추출)
+      if (response.candidates && response.candidates.length > 0) {
+        const candidate = response.candidates[0];
+        if (candidate.content && candidate.content.parts) {
+          for (const part of candidate.content.parts) {
+            if (part.inlineData && part.inlineData.data) {
+              const mimeType = part.inlineData.mimeType || 'image/png';
+              return `data:${mimeType};base64,${part.inlineData.data}`;
+            }
           }
+        }
+        
+        // 이미지가 없고 텍스트만 있는 경우 (Safety Filter 작동 등)
+        if (candidate.content && candidate.content.parts[0]?.text) {
+          throw new Error(`AI 응답: ${candidate.content.parts[0].text}`);
         }
       }
 
-      if (!resultImageUrl) {
-        // 이미지가 없는 경우 텍스트 응답 확인 (차단 사유 등)
-        const textReason = response.text || '알 수 없는 이유로 이미지가 생성되지 않았습니다.';
-        throw new Error(`이미지 생성 실패: ${textReason}`);
-      }
-
-      return resultImageUrl;
+      throw new Error('AI가 이미지 데이터를 반환하지 않았습니다. 다시 시도하거나 다른 테마를 선택해주세요.');
     } catch (error: any) {
-      console.error('Transformation error:', error);
+      console.error('Transformation Error:', error);
       if (error.message?.includes('403') || error.message?.includes('permission')) {
-        throw new Error('API 키 권한이 없습니다. 유료 결제 설정이나 키 상태를 확인하세요.');
+        throw new Error('API 키 사용 권한이 없습니다. 유료 모델 제한이나 키 상태를 확인하세요.');
       }
       throw error;
     }
