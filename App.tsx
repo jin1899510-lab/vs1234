@@ -5,8 +5,10 @@ import { STUDIO_PRESETS } from './constants';
 import { studioService } from './geminiService';
 
 const App: React.FC = () => {
+  const [apiKeyInput, setApiKeyInput] = useState<string>('');
   const [hasKey, setHasKey] = useState<boolean>(false);
-  const [isInitialLoading, setIsInitialLoading] = useState<boolean>(true);
+  const [showKeyModal, setShowKeyModal] = useState<boolean>(false);
+  const [isTestingKey, setIsTestingKey] = useState<boolean>(false);
   
   const [selectedStyle, setSelectedStyle] = useState<StudioStyle>(StudioStyle.CINEMATIC_FOOD);
   const [uploadedImage, setUploadedImage] = useState<string | null>(null);
@@ -16,43 +18,33 @@ const App: React.FC = () => {
   
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Check for API key selection on mount as per guidelines for gemini-3-pro-image-preview
   useEffect(() => {
-    const checkKey = async () => {
-      try {
-        if ((window as any).aistudio) {
-          const has = await (window as any).aistudio.hasSelectedApiKey();
-          setHasKey(has);
-        }
-      } catch (err) {
-        console.error("Error checking API key status:", err);
-      } finally {
-        setIsInitialLoading(false);
-      }
-    };
-    checkKey();
+    const savedKey = localStorage.getItem('_sv_api_key_');
+    if (savedKey || process.env.API_KEY) {
+      setHasKey(true);
+      if (savedKey) setApiKeyInput(atob(savedKey));
+    } else {
+      setShowKeyModal(true);
+    }
   }, []);
 
-  // Open the official AI Studio key selection dialog
-  const handleSelectKey = async () => {
+  const handleSaveKey = async () => {
+    if (!apiKeyInput.trim()) return;
+    setIsTestingKey(true);
+    setError(null);
     try {
-      if ((window as any).aistudio) {
-        await (window as any).aistudio.openSelectKey();
-        // Assume success as per guidelines to avoid race conditions
+      const isValid = await studioService.testConnection(apiKeyInput);
+      if (isValid) {
+        localStorage.setItem('_sv_api_key_', btoa(apiKeyInput));
         setHasKey(true);
-        setError(null);
+        setShowKeyModal(false);
+      } else {
+        setError("유효하지 않은 API 키입니다.");
       }
     } catch (err) {
-      setError("API 키 선택 중 오류가 발생했습니다.");
-    }
-  };
-
-  // Fix: Added the missing reset function to clear the current image upload
-  const reset = () => {
-    setUploadedImage(null);
-    setError(null);
-    if (fileInputRef.current) {
-      fileInputRef.current.value = '';
+      setError("연결 테스트 중 오류가 발생했습니다.");
+    } finally {
+      setIsTestingKey(false);
     }
   };
 
@@ -85,146 +77,111 @@ const App: React.FC = () => {
       };
       setResults(prev => [newResult, ...prev]);
     } catch (err: any) {
-      // Handle the case where the key might have been revoked or lost
-      if (err?.message?.includes("Requested entity was not found")) {
-        setHasKey(false);
-        setError("API 키가 유효하지 않습니다. 다시 선택해주세요.");
-      } else {
-        setError(err.message || "이미지 변환 중 오류가 발생했습니다.");
-      }
+      setError(err.message || "변환 중 오류가 발생했습니다.");
     } finally {
       setIsProcessing(false);
     }
   };
 
-  // Official API Key Selection Overlay for high-quality image generation
-  const KeySelectionOverlay = () => (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-md">
-      <div className="glass max-w-md w-full p-8 rounded-[40px] space-y-6 shadow-2xl border-white/20">
-        <div className="text-center">
-          <div className="w-16 h-16 bg-white/5 rounded-2xl flex items-center justify-center mx-auto mb-4">
-            <svg className="w-8 h-8 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"></path></svg>
-          </div>
-          <h2 className="text-2xl serif italic text-white">API 키가 필요합니다</h2>
-          <p className="text-gray-400 text-sm mt-2 leading-relaxed">
-            고품질 이미지 스튜디오 기능을 사용하려면<br/>유료 결제가 설정된 API 키를 선택해야 합니다.
-          </p>
-        </div>
+  const reset = () => {
+    setUploadedImage(null);
+    setError(null);
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
 
+  // API 키 입력 오버레이
+  const KeyModal = () => (
+    <div className="fixed inset-0 z-[200] flex items-center justify-center p-6 bg-black/95 backdrop-blur-md">
+      <div className="glass max-w-md w-full p-10 rounded-[40px] border-white/20 shadow-2xl">
+        <h2 className="text-3xl serif italic text-center text-white mb-6">API 키 설정</h2>
+        <p className="text-gray-400 text-sm text-center mb-8 leading-relaxed">
+          고화질 이미지 생성을 위해 Google API 키가 필요합니다.<br/>
+          (무료 등급 키도 사용 가능하도록 최적화되었습니다)
+        </p>
         <div className="space-y-4">
+          <input 
+            type="password"
+            value={apiKeyInput}
+            onChange={(e) => setApiKeyInput(e.target.value)}
+            placeholder="AI Studio API 키 입력"
+            className="w-full bg-white/5 border border-white/10 rounded-2xl px-6 py-4 text-white focus:outline-none focus:border-white/40 transition-all text-center"
+          />
           <button 
-            onClick={handleSelectKey}
-            className="w-full py-4 bg-white text-black rounded-full font-bold hover:scale-[1.02] active:scale-95 transition-all flex items-center justify-center gap-2"
+            onClick={handleSaveKey}
+            disabled={isTestingKey || !apiKeyInput.trim()}
+            className="w-full py-4 bg-white text-black rounded-full font-bold hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50"
           >
-            API 키 선택하기
+            {isTestingKey ? "연결 확인 중..." : "설정 저장 및 시작"}
           </button>
-
           <div className="text-center">
-            <a 
-              href="https://ai.google.dev/gemini-api/docs/billing" 
-              target="_blank" 
-              rel="noopener noreferrer"
-              className="text-xs text-gray-500 underline hover:text-white transition-colors"
-            >
-              결제 및 비용 관련 문서 확인하기
-            </a>
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-[10px] text-gray-500 underline hover:text-white">키 발급받기 (Google AI Studio)</a>
           </div>
         </div>
-
-        {error && <p className="text-red-400 text-xs text-center font-medium animate-pulse">{error}</p>}
+        {error && <p className="text-red-400 text-xs mt-4 text-center">{error}</p>}
       </div>
     </div>
   );
 
-  if (isInitialLoading) {
-    return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="animate-spin h-8 w-8 border-4 border-white/10 border-t-white rounded-full"></div>
-      </div>
-    );
-  }
-
   return (
-    <div className="min-h-screen flex flex-col items-center p-4 md:p-8">
-      {!hasKey && <KeySelectionOverlay />}
+    <div className="min-h-screen flex flex-col items-center p-4 md:p-12 max-w-7xl mx-auto">
+      {showKeyModal && <KeyModal />}
 
       {/* Header */}
-      <header className="w-full max-w-6xl flex flex-col items-center mb-12 text-center">
-        <div className="flex items-center gap-4 mb-4">
-          <div className="px-4 py-1 rounded-full glass text-[10px] font-semibold uppercase tracking-widest text-yellow-500">
-            Professional Studio AI
-          </div>
-          <button 
-            onClick={handleSelectKey}
-            className={`flex items-center gap-2 px-3 py-1 rounded-full border transition-all text-[10px] font-bold uppercase tracking-tight ${
-              hasKey 
-              ? 'bg-green-500/10 border-green-500/20 text-green-400 hover:bg-green-500/20' 
-              : 'bg-red-500/10 border-red-500/20 text-red-400 hover:bg-red-500/20'
-            }`}
-          >
-            <span className={`w-1.5 h-1.5 rounded-full ${hasKey ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
-            {hasKey ? 'API Connected' : 'API Required'}
-          </button>
+      <header className="w-full text-center mb-16">
+        <div className="inline-flex items-center gap-3 px-4 py-1.5 rounded-full glass mb-6">
+          <span className={`w-2 h-2 rounded-full ${hasKey ? 'bg-green-500 animate-pulse' : 'bg-red-500'}`}></span>
+          <span className="text-[10px] font-bold uppercase tracking-widest text-gray-300">
+            {hasKey ? 'Engine Connected' : 'Engine Offline'}
+          </span>
+          <button onClick={() => setShowKeyModal(true)} className="ml-2 text-[10px] underline text-yellow-500">변경</button>
         </div>
-        <h1 className="text-5xl md:text-7xl serif mb-6 tracking-tight">
+        <h1 className="text-6xl md:text-8xl serif mb-6 tracking-tighter">
           스튜디오 <span className="italic text-gray-400">비전</span>
         </h1>
-        <p className="text-gray-400 max-w-xl text-lg font-light leading-relaxed">
-          평범한 사진을 프리미엄 상업 사진 수준으로 격상시키세요. 스타일을 선택하기만 하면 AI가 조명, 소품, 구도를 완벽하게 재구성합니다.
-        </p>
+        <p className="text-gray-400 text-lg font-light">평범한 사진을 전문가의 손길이 닿은 상업용 화보로 변환하세요.</p>
       </header>
 
-      <main className="w-full max-w-6xl grid grid-cols-1 lg:grid-cols-12 gap-8">
-        {/* Sidebar: Controls */}
+      <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-12">
+        {/* Sidebar */}
         <div className="lg:col-span-4 space-y-8">
-          <section className="glass rounded-3xl p-6">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
-              <span className="w-6 h-6 rounded-full bg-white text-black flex items-center justify-center text-xs font-bold">1</span>
-              원본 이미지
+          <section className="glass p-8 rounded-[32px] border-white/5 shadow-xl">
+            <h2 className="text-lg font-bold mb-6 flex items-center gap-2">
+              <span className="bg-white text-black w-6 h-6 rounded-full flex items-center justify-center text-[10px]">1</span>
+              사진 업로드
             </h2>
-            
             {!uploadedImage ? (
               <div 
                 onClick={() => fileInputRef.current?.click()}
-                className="border-2 border-dashed border-gray-700 rounded-2xl p-8 flex flex-col items-center justify-center cursor-pointer hover:border-white transition-colors group h-64 bg-white/5"
+                className="border-2 border-dashed border-white/10 rounded-2xl h-64 flex flex-col items-center justify-center cursor-pointer hover:border-white/30 transition-all bg-white/2 group"
               >
-                <div className="w-12 h-12 rounded-full bg-gray-800 flex items-center justify-center mb-4 group-hover:bg-white group-hover:text-black transition-all">
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 4v16m8-8H4"></path></svg>
-                </div>
-                <p className="text-sm text-gray-400 group-hover:text-white font-medium">사진을 업로드하세요</p>
+                <svg className="w-10 h-10 text-gray-600 mb-4 group-hover:text-white transition-colors" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 4v16m8-8H4"></path></svg>
+                <span className="text-sm text-gray-500 group-hover:text-white">클릭하여 이미지 선택</span>
                 <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept="image/*" />
               </div>
             ) : (
-              <div className="relative rounded-2xl overflow-hidden group">
-                <img src={uploadedImage} alt="Uploaded" className="w-full h-64 object-cover" />
-                <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                  <button onClick={reset} className="bg-white text-black px-4 py-2 rounded-full text-xs font-bold uppercase tracking-widest shadow-xl">이미지 교체</button>
-                </div>
+              <div className="relative rounded-2xl overflow-hidden aspect-square border border-white/10">
+                <img src={uploadedImage} alt="Uploaded" className="w-full h-full object-cover" />
+                <button onClick={reset} className="absolute inset-0 bg-black/60 opacity-0 hover:opacity-100 transition-opacity flex items-center justify-center text-white font-bold text-sm">이미지 교체</button>
               </div>
             )}
           </section>
 
-          <section className="glass rounded-3xl p-6">
-            <h2 className="text-lg font-semibold mb-4 flex items-center gap-2 text-white">
-              <span className="w-6 h-6 rounded-full bg-white text-black flex items-center justify-center text-xs font-bold">2</span>
-              스타일 선택
+          <section className="glass p-8 rounded-[32px] border-white/5 shadow-xl">
+            <h2 className="text-lg font-bold mb-6 flex items-center gap-2">
+              <span className="bg-white text-black w-6 h-6 rounded-full flex items-center justify-center text-[10px]">2</span>
+              스타일 테마
             </h2>
-            <div className="grid grid-cols-1 gap-3">
+            <div className="space-y-3">
               {STUDIO_PRESETS.map((preset) => (
                 <button
                   key={preset.id}
                   onClick={() => setSelectedStyle(preset.id)}
-                  className={`flex items-center gap-4 p-3 rounded-xl transition-all text-left ${
-                    selectedStyle === preset.id 
-                    ? 'bg-white text-black ring-2 ring-white/20' 
-                    : 'bg-gray-900/50 hover:bg-gray-800 text-gray-400'
+                  className={`w-full flex items-center gap-4 p-3 rounded-2xl transition-all border ${
+                    selectedStyle === preset.id ? 'bg-white text-black border-white' : 'bg-white/5 border-transparent text-gray-400 hover:bg-white/10'
                   }`}
                 >
-                  <img src={preset.thumbnail} alt={preset.name} className="w-12 h-12 rounded-lg object-cover" />
-                  <div>
-                    <div className="text-sm font-bold leading-tight">{preset.name}</div>
-                    <div className="text-[10px] opacity-70 leading-tight mt-0.5 line-clamp-1">{preset.description}</div>
-                  </div>
+                  <img src={preset.thumbnail} className="w-10 h-10 rounded-lg object-cover" />
+                  <span className="text-xs font-bold text-left flex-1">{preset.name}</span>
                 </button>
               ))}
             </div>
@@ -233,111 +190,62 @@ const App: React.FC = () => {
           <button
             disabled={!uploadedImage || isProcessing || !hasKey}
             onClick={generateTransformation}
-            className={`w-full py-5 rounded-full font-bold text-lg transition-all flex items-center justify-center gap-2 ${
-              !uploadedImage || isProcessing || !hasKey
-              ? 'bg-gray-800 text-gray-600 cursor-not-allowed'
-              : 'bg-white text-black hover:shadow-[0_0_40px_rgba(255,255,255,0.2)] hover:scale-[1.02]'
-            }`}
+            className="w-full py-6 rounded-full bg-white text-black font-black text-lg hover:scale-[1.02] active:scale-95 transition-all shadow-2xl disabled:opacity-20 disabled:scale-100"
           >
-            {isProcessing ? (
-              <>
-                <svg className="animate-spin h-5 w-5 border-2 border-black border-t-transparent rounded-full" viewBox="0 0 24 24"></svg>
-                AI가 촬영 중...
-              </>
-            ) : (
-              '스튜디오 샷 생성'
-            )}
+            {isProcessing ? "스튜디오 촬영 중..." : "결과 생성하기"}
           </button>
-
-          {error && (
-            <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-2xl text-red-400 text-sm animate-in fade-in zoom-in duration-300">
-              {error}
-            </div>
-          )}
           
-          <div className="pt-4 border-t border-white/5 flex flex-col gap-2">
-            <button 
-              onClick={handleSelectKey}
-              className="text-[10px] text-gray-600 uppercase tracking-widest hover:text-gray-400 transition-colors"
-            >
-              API 키 재설정
-            </button>
-          </div>
+          {error && <div className="p-4 bg-red-900/20 border border-red-500/50 rounded-2xl text-red-400 text-xs text-center">{error}</div>}
         </div>
 
         {/* Results Area */}
-        <div className="lg:col-span-8 space-y-8">
-          {results.length === 0 && !isProcessing && (
-            <div className="h-full min-h-[500px] glass rounded-[40px] flex flex-col items-center justify-center p-12 text-center border-dashed border-white/5">
-              <div className="w-24 h-24 rounded-full bg-white/5 flex items-center justify-center mb-8">
-                <svg className="w-12 h-12 text-gray-800" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path></svg>
-              </div>
-              <h3 className="text-3xl serif mb-4 text-white font-light">나만의 걸작을 시작하세요</h3>
-              <p className="text-gray-500 max-w-sm leading-relaxed">
-                좌측에서 이미지를 업로드하고 원하는 스튜디오 스타일을 선택하면 AI가 새로운 구도와 조명을 입힌 결과를 보여줍니다.
-              </p>
+        <div className="lg:col-span-8">
+          {isProcessing && (
+            <div className="glass rounded-[40px] h-[600px] flex flex-col items-center justify-center p-12 text-center animate-pulse">
+              <div className="w-24 h-24 border-4 border-white/10 border-t-white rounded-full animate-spin mb-8"></div>
+              <h3 className="text-4xl serif italic mb-4">현상 중...</h3>
+              <p className="text-gray-500">AI가 조명과 텍스처를 스튜디오급으로 보정하고 있습니다.</p>
             </div>
           )}
 
-          {isProcessing && (
-            <div className="h-full min-h-[500px] glass rounded-[40px] flex flex-col items-center justify-center p-12 text-center animate-in fade-in duration-500">
-              <div className="relative">
-                <div className="w-40 h-40 rounded-full border-[12px] border-white/5 border-t-white animate-spin"></div>
-                <div className="absolute inset-0 flex items-center justify-center">
-                   <svg className="w-16 h-16 text-white animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M12 21a9 9 0 100-18 9 9 0 000 18z"></path><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M12 8v4l3 3"></path></svg>
-                </div>
+          {!isProcessing && results.length === 0 && (
+            <div className="glass rounded-[40px] h-[600px] flex flex-col items-center justify-center p-12 text-center border-dashed border-white/10">
+              <div className="opacity-10 mb-8 scale-150">
+                <svg className="w-20 h-20" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
               </div>
-              <h3 className="text-4xl serif mt-12 mb-4 text-white italic font-light">Developing Studio Quality...</h3>
-              <p className="text-gray-500 font-medium tracking-wide">질감 합성 및 시네마틱 컬러 그레이딩 진행 중</p>
+              <h3 className="text-2xl serif text-white/40">생성된 이미지가 여기에 표시됩니다.</h3>
             </div>
           )}
 
           <div className="space-y-24">
-            {results.map((result, idx) => (
-              <div key={result.timestamp} className="space-y-8 animate-in fade-in slide-in-from-bottom-8 duration-1000">
-                <div className="flex items-end justify-between border-b border-white/10 pb-6">
-                  <div>
-                    <span className="text-yellow-500 text-[10px] font-bold uppercase tracking-[0.3em] mb-2 block">Studio Generation</span>
-                    <h3 className="text-3xl serif italic text-white">결과물 #{results.length - idx}</h3>
-                  </div>
-                  <button 
-                    onClick={() => {
-                      const link = document.createElement('a');
-                      link.href = result.resultUrl;
-                      link.download = `studio-vision-${result.timestamp}.png`;
-                      link.click();
-                    }}
-                    className="px-8 py-3 rounded-full bg-white text-black text-xs font-bold uppercase tracking-widest hover:scale-105 transition-all shadow-xl"
-                  >
-                    Download 4K
-                  </button>
+            {results.map((res, i) => (
+              <div key={res.timestamp} className="animate-in fade-in slide-in-from-bottom-12 duration-1000">
+                <div className="flex items-center justify-between mb-8 border-b border-white/10 pb-4">
+                  <h3 className="text-3xl serif italic">Result #{results.length - i}</h3>
+                  <a href={res.resultUrl} download={`studio-${res.timestamp}.png`} className="text-[10px] font-bold uppercase tracking-widest text-yellow-500 border border-yellow-500/50 px-6 py-2 rounded-full hover:bg-yellow-500 hover:text-black transition-all">Download</a>
                 </div>
-                
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="group relative rounded-[40px] overflow-hidden glass aspect-[4/5] border border-white/5">
-                    <img src={result.originalUrl} alt="Original" className="w-full h-full object-cover opacity-30 grayscale group-hover:grayscale-0 group-hover:opacity-100 transition-all duration-1000" />
-                    <div className="absolute top-8 left-8 bg-black/40 backdrop-blur-md border border-white/10 px-6 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest text-white">Original Source</div>
+                  <div className="space-y-3">
+                    <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">Original Input</span>
+                    <div className="rounded-[32px] overflow-hidden glass aspect-square border border-white/5">
+                      <img src={res.originalUrl} className="w-full h-full object-cover grayscale opacity-50" />
+                    </div>
                   </div>
-                  <div className="relative rounded-[40px] overflow-hidden glass aspect-[4/5] shadow-[0_0_80px_rgba(255,255,255,0.05)] border border-white/20">
-                    <img src={result.resultUrl} alt="Studio Result" className="w-full h-full object-cover" />
-                    <div className="absolute top-8 left-8 bg-yellow-500 px-6 py-2 rounded-full text-[10px] font-bold uppercase tracking-widest text-black shadow-2xl font-black">AI Studio Shot</div>
+                  <div className="space-y-3">
+                    <span className="text-[10px] font-bold text-yellow-500 uppercase tracking-widest">Studio Shot</span>
+                    <div className="rounded-[32px] overflow-hidden glass aspect-square border-2 border-white/20 shadow-2xl">
+                      <img src={res.resultUrl} className="w-full h-full object-cover" />
+                    </div>
                   </div>
                 </div>
               </div>
             ))}
           </div>
         </div>
-      </main>
+      </div>
 
-      <footer className="w-full max-w-6xl mt-32 py-16 border-t border-white/5 flex flex-col md:flex-row justify-between items-center gap-12 opacity-40 hover:opacity-100 transition-opacity">
-        <div className="text-sm font-light text-gray-400">
-          Built for High-End Commercial Visuals & Studio Photography
-        </div>
-        <div className="flex gap-12 text-[10px] font-bold uppercase tracking-[0.2em] text-gray-500">
-          <a href="#" className="hover:text-white transition-colors">Documentation</a>
-          <a href="https://ai.google.dev" className="hover:text-white transition-colors">Gemini API</a>
-          <a href="#" className="hover:text-white transition-colors">Vercel Config</a>
-        </div>
+      <footer className="mt-40 py-20 border-t border-white/5 w-full text-center opacity-30 text-xs font-light tracking-widest">
+        POWERED BY GEMINI 2.5 FLASH ENGINE &copy; 2025 STUDIO VISION AI
       </footer>
     </div>
   );
